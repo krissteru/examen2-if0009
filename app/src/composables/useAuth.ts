@@ -1,67 +1,153 @@
-import { computed, ref } from 'vue';
-import { SecureStorage } from '@aparajita/capacitor-secure-storage';
+import { ref, computed } from 'vue';
 import { Device } from '@capacitor/device';
-import { api } from '@/services/api';
+import { SecureStoragePlugin } from 'capacitor-secure-storage-plugin';
+import { api } from '../services/api';
 
-export interface Usuario { id: number; nombre: string }
+export interface Usuario {
+  id: number;
+  nombre: string;
+  email?: string;
+}
 
-const CLAVE_TOKEN = 'token';
-const CLAVE_USUARIO = 'usuario';
+interface LoginResponse {
+  token: string;
+  usuario: Usuario;
+}
 
-// Estado compartido por toda la app (fuera de la función = un solo valor) — YA IMPLEMENTADO
+const TOKEN_KEY = 'auth_token';
+const USUARIO_KEY = 'auth_usuario';
+
 const token = ref<string | null>(null);
 const usuario = ref<Usuario | null>(null);
-let tokenCargado = false;
+const cargandoSesion = ref(false);
+let sesionCargada = false;
+let promesaCarga: Promise<void> | null = null;
 
-/** YA IMPLEMENTADO — lo usa services/api.ts para armar el encabezado Authorization. */
-export const obtenerToken = () => token.value;
+async function guardarSeguro(key: string, value: string): Promise<void> {
+  await SecureStoragePlugin.set({ key, value });
+}
 
-/**
- * TODO [M2] Sesión segura (10 pts en total para este archivo).
- *
- * El token y el usuario se guardan con SecureStorage (@aparajita/capacitor-secure-storage):
- * Keystore en Android, Keychain en iOS.  NO use localStorage ni @capacitor/preferences.
- *   await SecureStorage.set(clave, valor)   ·   await SecureStorage.get(clave)   ·   await SecureStorage.remove(clave)
- */
+async function leerSeguro(key: string): Promise<string | null> {
+  try {
+    const { value } = await SecureStoragePlugin.get({ key });
+    return value ?? null;
+  } catch {
+    return null;
+  }
+}
 
-/** TODO [M2] Borrar token y usuario de la memoria (refs) y del almacenamiento cifrado. */
-export async function olvidarSesion() {
-  // TODO [M2]
+async function borrarSeguro(key: string): Promise<void> {
+  try {
+    await SecureStoragePlugin.remove({ key });
+  } catch {
+    // Si la clave no existía en SecureStorage, ignoramos el error
+  }
 }
 
 export function useAuth() {
-  const estaAutenticado = computed(() => token.value !== null);
+  const estaAutenticado = computed(() => Boolean(token.value));
 
-  /**
-   * TODO [M2] login(email, password)
-   *  1. device_name = `${plataforma} ${modelo}` usando Device.getInfo() (máx. 60 caracteres).
-   *  2. POST /login con { email, password, device_name } usando api().
-   *     Respuesta 200: { token: "1|abc...", usuario: { id, nombre } }   ·   Error: 422 con errors.email
-   *  3. Guardar token y usuario en los refs y en SecureStorage.
-   *  No atrape el error: LoginPage.vue ya muestra los 422.
-   */
-  async function login(email: string, password: string) {
-    void [email, password, api, Device, SecureStorage, CLAVE_TOKEN, CLAVE_USUARIO];
-    throw new Error('TODO [M2] login sin implementar');
+  async function olvidarSesion(): Promise<void> {
+    token.value = null;
+    usuario.value = null;
+    sesionCargada = false;
+    await Promise.all([borrarSeguro(TOKEN_KEY), borrarSeguro(USUARIO_KEY)]);
   }
 
-  /**
-   * TODO [M2] cargarToken()
-   *  Al abrir la app, recupera token y usuario de SecureStorage y los pone en los refs.
-   *  Debe ejecutarse una sola vez (use la bandera tokenCargado).
-   */
-  async function cargarToken() {
-    void tokenCargado;
+  async function cargarToken(): Promise<void> {
+    if (sesionCargada) return;
+    if (promesaCarga) return promesaCarga;
+
+    cargandoSesion.value = true;
+    promesaCarga = (async () => {
+      try {
+        const storedToken = await leerSeguro(TOKEN_KEY);
+        const storedUsuario = await leerSeguro(USUARIO_KEY);
+
+        token.value = storedToken;
+        if (storedUsuario) {
+          try {
+            usuario.value = JSON.parse(storedUsuario) as Usuario;
+          } catch {
+            usuario.value = null;
+          }
+        } else {
+          usuario.value = null;
+        }
+        sesionCargada = true;
+      } finally {
+        cargandoSesion.value = false;
+        promesaCarga = null;
+      }
+    })();
+
+    return promesaCarga;
   }
 
-  /**
-   * TODO [M2] cerrarSesion()
-   *  POST /logout para revocar el token en el servidor y SIEMPRE borrar la sesión local,
-   *  aunque la API falle (sin red o token vencido).
-   */
-  async function cerrarSesion() {
-    // TODO [M2]
+  async function obtenerDeviceName(): Promise<string> {
+    try {
+      const info = await Device.getInfo();
+      const modelo = info.model || 'Dispositivo';
+      const plataforma = info.platform || 'unknown';
+      const os = info.operatingSystem || '';
+      return `${modelo} (${plataforma}${os ? ` - ${os}` : ''})`;
+    } catch {
+      return 'Dispositivo Web/Móvil';
+    }
   }
 
-  return { usuario, estaAutenticado, login, cargarToken, cerrarSesion };
+  async function login(email: string, password: string): Promise<LoginResponse> {
+    const device_name = await obtenerDeviceName();
+
+    const data = await api<LoginResponse>('/login', {
+      method: 'POST',
+      body: {
+        email,
+        password,
+        device_name,
+      },
+    });
+
+    if (!data || !data.token) {
+      throw new Error('Respuesta inválida del servidor al iniciar sesión');
+    }
+
+    token.value = data.token;
+    usuario.value = data.usuario;
+    sesionCargada = true;
+
+    await Promise.all([
+      guardarSeguro(TOKEN_KEY, data.token),
+      guardarSeguro(USUARIO_KEY, JSON.stringify(data.usuario)),
+    ]);
+
+    return data;
+  }
+
+  async function cerrarSesion(): Promise<void> {
+    const currentToken = token.value;
+    try {
+      if (currentToken) {
+        await api('/logout', {
+          method: 'POST',
+          token: currentToken,
+        });
+      }
+    } catch {
+      // Aunque falle la revocación en el servidor, siempre limpiamos la sesión local
+    } finally {
+      await olvidarSesion();
+    }
+  }
+
+  return {
+    token,
+    usuario,
+    estaAutenticado,
+    cargandoSesion,
+    login,
+    cargarToken,
+    cerrarSesion,
+    olvidarSesion,
+  };
 }

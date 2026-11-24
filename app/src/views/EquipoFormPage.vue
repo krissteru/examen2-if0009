@@ -1,125 +1,290 @@
 <template>
   <ion-page>
     <ion-header>
-      <ion-toolbar color="primary">
+      <ion-toolbar>
         <ion-buttons slot="start">
-          <ion-back-button default-href="/tabs/equipos" text="" />
+          <ion-back-button default-href="/tabs/equipos" />
         </ion-buttons>
-        <ion-title>{{ id ? 'Editar equipo' : 'Nuevo equipo' }}</ion-title>
-      </ion-toolbar>
-      <ion-toolbar v-if="!conectado" color="warning">
-        <ion-title size="small">Sin conexión: no es posible guardar</ion-title>
+        <ion-title>{{ esEdicion ? 'Editar Equipo' : 'Nuevo Equipo' }}</ion-title>
       </ion-toolbar>
     </ion-header>
 
     <ion-content class="ion-padding">
-      <form @submit.prevent="guardar" novalidate>
-        <ion-list lines="full">
+      <form @submit.prevent="guardar">
+        <ion-list>
           <ion-item>
-            <ion-input v-model="datos.codigo" label="Código" label-placement="stacked" placeholder="EQ-0000"
-              autocapitalize="characters" :maxlength="20" />
+            <ion-input
+              v-model="form.codigo"
+              label="Código"
+              label-placement="stacked"
+              placeholder="EQ-0001"
+              @ionInput="form.codigo = String($event.detail.value ?? '').toUpperCase()"
+            />
           </ion-item>
-          <small v-if="errores.codigo" class="error-campo">{{ errores.codigo }}</small>
+          <ion-text v-if="errores.codigo" color="danger">
+            <p class="ion-padding-start">{{ errores.codigo[0] }}</p>
+          </ion-text>
 
           <ion-item>
-            <ion-input v-model="datos.nombre" label="Nombre" label-placement="stacked" :maxlength="120" />
+            <ion-input
+              v-model="form.nombre"
+              label="Nombre"
+              label-placement="stacked"
+              placeholder="Nombre del equipo"
+            />
           </ion-item>
-          <small v-if="errores.nombre" class="error-campo">{{ errores.nombre }}</small>
+          <ion-text v-if="errores.nombre" color="danger">
+            <p class="ion-padding-start">{{ errores.nombre[0] }}</p>
+          </ion-text>
 
           <ion-item>
-            <ion-select v-model="datos.categoria_id" label="Categoría" label-placement="stacked"
-              interface="action-sheet" placeholder="Seleccione" cancel-text="Cancelar">
-              <ion-select-option v-for="c in listaCategorias" :key="c.id" :value="c.id">{{ c.nombre }}</ion-select-option>
+            <ion-select
+              v-model="form.categoria_id"
+              label="Categoría"
+              label-placement="stacked"
+              placeholder="Seleccione una categoría"
+            >
+              <ion-select-option
+                v-for="cat in categorias"
+                :key="cat.id"
+                :value="cat.id"
+              >
+                {{ cat.nombre }}
+              </ion-select-option>
             </ion-select>
           </ion-item>
-          <small v-if="errores.categoria_id" class="error-campo">{{ errores.categoria_id }}</small>
+          <ion-text v-if="errores.categoria_id" color="danger">
+            <p class="ion-padding-start">{{ errores.categoria_id[0] }}</p>
+          </ion-text>
 
-          <ion-item v-if="estadoActual !== 'prestado'">
-            <ion-select v-model="datos.estado" label="Estado" label-placement="stacked" interface="popover">
+          <ion-item v-if="!estaPrestado">
+            <ion-select
+              v-model="form.estado"
+              label="Estado"
+              label-placement="stacked"
+            >
               <ion-select-option value="disponible">Disponible</ion-select-option>
               <ion-select-option value="mantenimiento">Mantenimiento</ion-select-option>
+              <ion-select-option value="baja">Baja</ion-select-option>
             </ion-select>
           </ion-item>
-          <ion-item v-else>
-            <ion-label>Estado: prestado (no se modifica desde aquí)</ion-label>
-          </ion-item>
-          <small v-if="errores.estado" class="error-campo">{{ errores.estado }}</small>
+          <ion-text v-if="errores.estado" color="danger">
+            <p class="ion-padding-start">{{ errores.estado[0] }}</p>
+          </ion-text>
 
           <ion-item>
-            <ion-input v-model="datos.fecha_adquisicion" label="Fecha de adquisición" label-placement="stacked"
-              type="date" :max="hoy" />
+            <ion-input
+              v-model="form.fecha_adquisicion"
+              type="date"
+              label="Fecha de adquisición"
+              label-placement="stacked"
+            />
           </ion-item>
-          <small v-if="errores.fecha_adquisicion" class="error-campo">{{ errores.fecha_adquisicion }}</small>
+          <ion-text v-if="errores.fecha_adquisicion" color="danger">
+            <p class="ion-padding-start">{{ errores.fecha_adquisicion[0] }}</p>
+          </ion-text>
 
           <ion-item>
-            <ion-input v-model="datos.costo_interno" label="Costo interno (₡)" label-placement="stacked"
-              type="number" inputmode="decimal" :min="0"
-              :helper-text="id ? 'La API no expone este dato: vuelva a ingresarlo.' : undefined" />
+            <ion-input
+              v-model="form.costo_interno"
+              type="number"
+              step="0.01"
+              label="Costo interno"
+              label-placement="stacked"
+              placeholder="0.00"
+            />
           </ion-item>
-          <small v-if="errores.costo_interno" class="error-campo">{{ errores.costo_interno }}</small>
+          <ion-text v-if="errores.costo_interno" color="danger">
+            <p class="ion-padding-start">{{ errores.costo_interno[0] }}</p>
+          </ion-text>
         </ion-list>
 
-        <ion-button type="submit" expand="block" class="ion-margin-top" :disabled="!conectado">
-          Guardar
-        </ion-button>
+        <div class="ion-padding-top">
+          <ion-button expand="block" type="submit">
+            {{ esEdicion ? 'Actualizar' : 'Guardar' }}
+          </ion-button>
+        </div>
       </form>
     </ion-content>
   </ion-page>
 </template>
 
 <script setup lang="ts">
-import { reactive, ref } from 'vue';
+import { ref, computed } from 'vue';
+import { useRoute } from 'vue-router';
 import {
-  IonPage, IonHeader, IonToolbar, IonButtons, IonBackButton, IonTitle, IonContent, IonList, IonItem,
-  IonInput, IonSelect, IonSelectOption, IonLabel, IonButton,
-  loadingController, onIonViewWillEnter, useIonRouter,
+  IonPage,
+  IonHeader,
+  IonToolbar,
+  IonButtons,
+  IonBackButton,
+  IonTitle,
+  IonContent,
+  IonList,
+  IonItem,
+  IonInput,
+  IonSelect,
+  IonSelectOption,
+  IonButton,
+  IonText,
+  useIonRouter,
+  onIonViewWillEnter,
+  loadingController,
+  toastController,
 } from '@ionic/vue';
-import { actualizar, categorias, crear, obtener, type Categoria, type DatosEquipo, type Estado } from '@/services/equipos';
-import { ErrorApi } from '@/services/errores';
-import { mostrarToast } from '@/services/avisos';
-import { useConexion, vibrar } from '@/composables/useConexion';
+import { api, ErrorApi } from '../services/api';
+import { useAuth } from '../composables/useAuth';
 
-// id llega por props: true en la ruta equipos/:id/editar; en equipos/nuevo es undefined
-const props = defineProps<{ id?: string }>();
-const id = props.id;
+interface Categoria {
+  id: number;
+  nombre: string;
+}
 
+interface EquipoDetalle {
+  id: number;
+  codigo: string;
+  nombre: string;
+  estado: string;
+  fecha_adquisicion: string;
+  costo_interno?: number;
+  categoria?: Categoria;
+  categoria_id?: number;
+}
+
+const route = useRoute();
 const ionRouter = useIonRouter();
-const { conectado } = useConexion();
-const hoy = new Date().toISOString().slice(0, 10);
+const { token, olvidarSesion } = useAuth();
 
-const vacio = (): DatosEquipo => ({
-  codigo: '', nombre: '', categoria_id: null, estado: 'disponible', fecha_adquisicion: hoy, costo_interno: null,
+const equipoId = computed(() => route.params.id as string | undefined);
+const esEdicion = computed(() => Boolean(equipoId.value));
+const estaPrestado = ref(false);
+
+const categorias = ref<Categoria[]>([]);
+const errores = ref<Record<string, string[]>>({});
+
+const form = ref({
+  codigo: '',
+  nombre: '',
+  categoria_id: null as number | null,
+  estado: 'disponible',
+  fecha_adquisicion: '',
+  costo_interno: '',
 });
 
-const datos = reactive<DatosEquipo>(vacio());
-const listaCategorias = ref<Categoria[]>([]);
-const estadoActual = ref<Estado>('disponible');
-const errores = ref<Record<string, string>>({});
+async function mostrarToast(message: string, color = 'dark') {
+  const toast = await toastController.create({
+    message,
+    duration: 2500,
+    color,
+    position: 'bottom',
+  });
+  await toast.present();
+}
 
-/**
- * TODO [M5] Al entrar a la página:
- *  - Cargar las categorías para el ion-select (categorias()).
- *  - Nuevo: dejar el formulario vacío con vacio().
- *  - Edición: obtener(id) y llenar datos. Guarde el estado actual en estadoActual.
- *    costo_interno queda en null: la API no lo devuelve (EquipoResource lo oculta).
- *  - 404 → toast y volver a /tabs/equipos.
- */
+async function cargarDatos() {
+  const loading = await loadingController.create({ message: 'Cargando...' });
+  await loading.present();
+
+  try {
+    const respCats = await api<{ data: Categoria[] }>('/categorias', {
+      method: 'GET',
+      token: token.value,
+      onUnauthorized: olvidarSesion,
+    });
+    categorias.value = respCats?.data ?? [];
+
+    if (esEdicion.value && equipoId.value) {
+      const respEq = await api<{ data: EquipoDetalle }>(`/equipos/${equipoId.value}`, {
+        method: 'GET',
+        token: token.value,
+        onUnauthorized: olvidarSesion,
+      });
+
+      if (respEq?.data) {
+        const eq = respEq.data;
+        estaPrestado.value = eq.estado === 'prestado';
+        form.value = {
+          codigo: eq.codigo ?? '',
+          nombre: eq.nombre ?? '',
+          categoria_id: eq.categoria?.id ?? eq.categoria_id ?? null,
+          estado: eq.estado ?? 'disponible',
+          fecha_adquisicion: eq.fecha_adquisicion ?? '',
+          costo_interno: eq.costo_interno !== undefined ? String(eq.costo_interno) : '',
+        };
+      }
+    }
+  } catch (err) {
+    if (err instanceof ErrorApi && err.status === 404) {
+      await mostrarToast('El equipo no existe.', 'warning');
+      ionRouter.back();
+    } else {
+      await mostrarToast('Error al cargar los datos del formulario.', 'danger');
+    }
+  } finally {
+    await loading.dismiss();
+  }
+}
+
 onIonViewWillEnter(async () => {
   errores.value = {};
-  void [categorias, obtener, listaCategorias, estadoActual, ionRouter];
+  await cargarDatos();
 });
 
-/**
- * TODO [M5] guardar()
- *  1. Mostrar loadingController ("Guardando…") y cerrarlo SIEMPRE, salga bien o mal.
- *  2. Enviar el cuerpo con código en mayúscula y sin espacios sobrantes, y costo_interno como número.
- *     Si el equipo está prestado, no envíe el campo estado.
- *  3. Nuevo → crear(); edición → actualizar(id).
- *  4. Éxito: vibrar() [M7], toast y volver a la lista con useIonRouter (back si se puede).
- *  5. 422 → mostrar el primer mensaje de cada campo debajo de su campo (error.erroresPorCampo).
- *     404 → toast "El equipo ya no existe."   ·   otros → toast genérico.
- */
 async function guardar() {
-  void [loadingController, actualizar, crear, ErrorApi, mostrarToast, vibrar];
+  errores.value = {};
+  const loading = await loadingController.create({ message: 'Guardando...' });
+  await loading.present();
+
+  try {
+    const payload: Record<string, unknown> = {
+      codigo: form.value.codigo.trim().toUpperCase(),
+      nombre: form.value.nombre.trim(),
+      categoria_id: form.value.categoria_id,
+      fecha_adquisicion: form.value.fecha_adquisicion,
+      costo_interno:
+        form.value.costo_interno === '' ? null : Number(form.value.costo_interno),
+    };
+
+    if (!estaPrestado.value) {
+      payload.estado = form.value.estado;
+    }
+
+    if (esEdicion.value && equipoId.value) {
+      await api(`/equipos/${equipoId.value}`, {
+        method: 'PUT',
+        body: payload,
+        token: token.value,
+        onUnauthorized: olvidarSesion,
+      });
+      await mostrarToast('Equipo actualizado correctamente.', 'success');
+    } else {
+      await api('/equipos', {
+        method: 'POST',
+        body: payload,
+        token: token.value,
+        onUnauthorized: olvidarSesion,
+      });
+      await mostrarToast('Equipo creado correctamente.', 'success');
+    }
+
+    ionRouter.back();
+  } catch (err) {
+    if (err instanceof ErrorApi) {
+      if (err.status === 422) {
+        const body = err.cuerpo as { errors?: Record<string, string[]> } | null;
+        errores.value = body?.errors ?? {};
+        await mostrarToast('Revise los campos marcados.', 'warning');
+      } else if (err.status === 404) {
+        await mostrarToast('El equipo ya no existe.', 'warning');
+        ionRouter.back();
+      } else {
+        await mostrarToast(err.message, 'danger');
+      }
+    } else {
+      await mostrarToast('Ocurrió un error al guardar.', 'danger');
+    }
+  } finally {
+    await loading.dismiss();
+  }
 }
 </script>

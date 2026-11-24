@@ -1,52 +1,45 @@
-export class ErrorApi extends Error {
-  status: number;
-  cuerpo: unknown;
+import { ErrorApi } from './errores';
+import { obtenerToken, olvidarSesion } from '@/composables/useAuth';
+import router from '@/router';
 
-  constructor(status: number, cuerpo: unknown, mensaje?: string) {
-    super(mensaje ?? `Error HTTP ${status}`);
-    this.name = 'ErrorApi';
-    this.status = status;
-    this.cuerpo = cuerpo;
-  }
-}
+const BASE_URL = (import.meta.env.VITE_API_URL ?? '').replace(/\/+$/, '');
+const TIEMPO_MAXIMO_MS = 10_000;
 
-export interface ApiOptions {
-  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+export interface OpcionesApi {
+  method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
   body?: unknown;
-  params?: Record<string, string | number | boolean | undefined | null>;
-  token?: string | null;
-  onUnauthorized?: () => void | Promise<void>;
+  params?: Record<string, string | number | undefined>;
 }
 
 function construirUrl(
   ruta: string,
-  params?: Record<string, string | number | boolean | undefined | null>
+  params?: Record<string, string | number | undefined>,
 ): string {
-  const base = (import.meta.env.VITE_API_URL ?? '').replace(/\/+$/, '');
-  const path = ruta.startsWith('/') ? ruta : `/${ruta}`;
-  const fullUrl = `${base}${path}`;
+  const rutaLimpia = ruta.startsWith('/') ? ruta : `/${ruta}`;
+  const urlBase = `${BASE_URL}${rutaLimpia}`;
 
-  if (!params) return fullUrl;
+  if (!params) return urlBase;
 
-  const searchParams = new URLSearchParams();
-  for (const [key, value] of Object.entries(params)) {
-    if (value !== undefined && value !== null && String(value) !== '') {
-      searchParams.append(key, String(value));
+  const query = new URLSearchParams();
+  for (const [clave, valor] of Object.entries(params)) {
+    if (valor !== undefined && valor !== null && String(valor) !== '') {
+      query.append(clave, String(valor));
     }
   }
 
-  const queryString = searchParams.toString();
-  return queryString ? `${fullUrl}?${queryString}` : fullUrl;
+  const qs = query.toString();
+  return qs ? `${urlBase}?${qs}` : urlBase;
 }
 
-export async function api<T>(ruta: string, options: ApiOptions = {}): Promise<T | null> {
-  const { method = 'GET', body, params, token, onUnauthorized } = options;
+export async function api<T = unknown>(ruta: string, opciones: OpcionesApi = {}): Promise<T> {
+  const { method = 'GET', body, params } = opciones;
   const url = construirUrl(ruta, params);
 
   const headers: Record<string, string> = {
     Accept: 'application/json',
   };
 
+  const token = obtenerToken();
   if (token) {
     headers.Authorization = `Bearer ${token}`;
   }
@@ -55,62 +48,36 @@ export async function api<T>(ruta: string, options: ApiOptions = {}): Promise<T 
     headers['Content-Type'] = 'application/json';
   }
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 10000);
+  const controlador = new AbortController();
+  const temporizador = setTimeout(() => controlador.abort(), TIEMPO_MAXIMO_MS);
 
+  let respuesta: Response;
   try {
-    const response = await fetch(url, {
+    respuesta = await fetch(url, {
       method,
       headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
-      signal: controller.signal,
+      signal: controlador.signal,
     });
-
-    if (response.status === 204) {
-      return null;
-    }
-
-    const contentType = response.headers.get('content-type') ?? '';
-    let cuerpo: unknown = null;
-    if (contentType.includes('application/json')) {
-      cuerpo = await response.json().catch(() => null);
-    } else {
-      const texto = await response.text().catch(() => '');
-      cuerpo = texto || null;
-    }
-
-    if (!response.ok) {
-      if (response.status === 401) {
-        if (onUnauthorized) {
-          await onUnauthorized();
-        }
-        if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
-          window.location.assign('/login');
-        }
-      }
-
-      const mensajeApi =
-        typeof cuerpo === 'object' && cuerpo !== null && 'mensaje' in cuerpo
-          ? String((cuerpo as { mensaje?: unknown }).mensaje)
-          : typeof cuerpo === 'object' && cuerpo !== null && 'message' in cuerpo
-            ? String((cuerpo as { message?: unknown }).message)
-            : `Error HTTP ${response.status}`;
-
-      throw new ErrorApi(response.status, cuerpo, mensajeApi);
-    }
-
-    return cuerpo as T;
-  } catch (err) {
-    if (err instanceof ErrorApi) {
-      throw err;
-    }
-    const esAborto = err instanceof DOMException && err.name === 'AbortError';
-    throw new ErrorApi(
-      0,
-      null,
-      esAborto ? 'Tiempo de espera agotado (10s)' : 'No se pudo conectar con el servidor'
-    );
+  } catch {
+    throw new ErrorApi(0, { mensaje: 'No fue posible conectar con la API.' });
   } finally {
-    clearTimeout(timeoutId);
+    clearTimeout(temporizador);
   }
+
+  if (respuesta.status === 204) {
+    return null as T;
+  }
+
+  const cuerpo = await respuesta.json().catch(() => null);
+
+  if (!respuesta.ok) {
+    if (respuesta.status === 401 && ruta !== '/login') {
+      await olvidarSesion();
+      await router.replace('/login');
+    }
+    throw new ErrorApi(respuesta.status, cuerpo);
+  }
+
+  return cuerpo as T;
 }

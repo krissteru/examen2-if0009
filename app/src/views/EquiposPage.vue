@@ -1,288 +1,183 @@
 <template>
   <ion-page>
     <ion-header>
-      <ion-toolbar>
+      <ion-toolbar color="primary">
         <ion-title>Equipos</ion-title>
         <ion-buttons slot="end">
-          <ion-button router-link="/equipos/nuevo">
-            <ion-icon slot="icon-only" :icon="addOutline" />
+          <ion-button router-link="/tabs/equipos/nuevo" aria-label="Nuevo equipo">
+            <ion-icon slot="icon-only" :icon="add" />
           </ion-button>
         </ion-buttons>
       </ion-toolbar>
       <ion-toolbar>
-        <ion-searchbar
-          v-model="busqueda"
-          placeholder="Buscar por código o nombre..."
-          :debounce="400"
-          @ionInput="onBuscar"
-        />
+        <ion-searchbar v-model="q" :debounce="400" placeholder="Buscar por código o nombre" @ion-input="buscar" />
+      </ion-toolbar>
+      <!-- YA IMPLEMENTADO: depende de useConexion() [M7] -->
+      <ion-toolbar v-if="!conectado" color="warning">
+        <ion-title size="small">Sin conexión: los datos pueden estar desactualizados</ion-title>
       </ion-toolbar>
     </ion-header>
 
     <ion-content>
-      <ion-refresher slot="fixed" @ionRefresh="onRefresh">
+      <ion-refresher slot="fixed" @ion-refresh="refrescar">
         <ion-refresher-content />
       </ion-refresher>
 
-      <!-- Skeleton en primera carga -->
-      <ion-list v-if="cargandoInicial">
+      <!-- Primera carga: skeleton -->
+      <ion-list v-if="cargando && equipos.length === 0">
         <ion-item v-for="n in 6" :key="n">
           <ion-label>
             <h2><ion-skeleton-text animated style="width: 65%" /></h2>
             <p><ion-skeleton-text animated style="width: 45%" /></p>
           </ion-label>
-          <ion-skeleton-text slot="end" animated style="width: 70px; height: 22px; border-radius: 12px" />
+          <ion-skeleton-text slot="end" animated style="width: 72px; height: 22px; border-radius: 12px" />
         </ion-item>
       </ion-list>
 
-      <!-- Error con Reintentar -->
-      <div v-else-if="errorMensaje" class="ion-padding ion-text-center">
-        <ion-text color="danger">
-          <p>{{ errorMensaje }}</p>
-        </ion-text>
-        <ion-button @click="cargarEquipos(true)">Reintentar</ion-button>
+      <!-- Error con reintentar -->
+      <div v-else-if="error && equipos.length === 0" class="estado-vacio">
+        <ion-icon :icon="cloudOfflineOutline" aria-hidden="true" />
+        <p>{{ error }}</p>
+        <ion-button fill="outline" @click="cargar(true)">Reintentar</ion-button>
       </div>
 
       <!-- Estado vacío -->
-      <div v-else-if="equipos.length === 0" class="ion-padding ion-text-center">
-        <ion-text color="medium">
-          <p>No se encontraron equipos registrados.</p>
-        </ion-text>
+      <div v-else-if="!cargando && equipos.length === 0" class="estado-vacio">
+        <ion-icon :icon="searchOutline" aria-hidden="true" />
+        <p>{{ q.trim() ? 'No hay equipos que coincidan con la búsqueda.' : 'No hay equipos registrados.' }}</p>
       </div>
 
-      <!-- Listado con ion-item-sliding -->
+      <!-- Listado con deslizamiento para eliminar -->
       <ion-list v-else>
         <ion-item-sliding v-for="equipo in equipos" :key="equipo.id">
-          <ion-item :router-link="`/equipos/${equipo.id}/editar`" button detail>
+          <ion-item :router-link="`/tabs/equipos/${equipo.id}/editar`" button detail>
             <ion-label>
               <h2>{{ equipo.nombre }}</h2>
-              <p>{{ equipo.codigo }} - {{ equipo.categoria?.nombre }}</p>
+              <p>{{ equipo.codigo }} · {{ equipo.categoria.nombre }}</p>
             </ion-label>
-            <ion-badge slot="end" :color="colorEstado(equipo.estado)">
+            <ion-badge slot="end" :color="colorEstado[equipo.estado]">
               {{ equipo.estado }}
             </ion-badge>
           </ion-item>
 
           <ion-item-options side="end">
-            <ion-item-option color="danger" @click="confirmarEliminacion(equipo)">
-              <ion-icon slot="icon-only" :icon="trashOutline" />
+            <ion-item-option color="danger" @click="confirmarEliminacion(equipo, $event)">
+              <ion-icon slot="start" :icon="trashOutline" />
+              Eliminar
             </ion-item-option>
           </ion-item-options>
         </ion-item-sliding>
       </ion-list>
 
-      <!-- Infinite Scroll -->
-      <ion-infinite-scroll
-        :disabled="paginaActual >= ultimaPagina"
-        @ionInfinite="onInfinite"
-      >
-        <ion-infinite-scroll-content loading-spinner="crescent" />
+      <ion-infinite-scroll :disabled="!hayMas" @ion-infinite="cargarMas">
+        <ion-infinite-scroll-content />
       </ion-infinite-scroll>
     </ion-content>
   </ion-page>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import {
-  IonPage,
-  IonHeader,
-  IonToolbar,
-  IonTitle,
-  IonButtons,
-  IonButton,
-  IonIcon,
-  IonSearchbar,
-  IonContent,
-  IonRefresher,
-  IonRefresherContent,
-  IonList,
-  IonItem,
-  IonItemSliding,
-  IonItemOptions,
-  IonItemOption,
-  IonLabel,
-  IonBadge,
-  IonSkeletonText,
-  IonText,
-  IonInfiniteScroll,
-  IonInfiniteScrollContent,
-  onIonViewWillEnter,
-  alertController,
-  toastController,
+  IonPage, IonHeader, IonToolbar, IonTitle, IonButtons, IonButton, IonIcon, IonSearchbar, IonContent,
+  IonRefresher, IonRefresherContent, IonList, IonItem, IonLabel, IonSkeletonText, IonBadge,
+  IonItemSliding, IonItemOptions, IonItemOption, IonInfiniteScroll, IonInfiniteScrollContent,
+  alertController, onIonViewWillEnter,
 } from '@ionic/vue';
-import { addOutline, trashOutline } from 'ionicons/icons';
-import { api, ErrorApi } from '../services/api';
-import { useAuth } from '../composables/useAuth';
+import type { InfiniteScrollCustomEvent, RefresherCustomEvent } from '@ionic/vue';
+import { add, cloudOfflineOutline, searchOutline, trashOutline } from 'ionicons/icons';
+import { eliminar, listar, type Equipo, type Estado } from '@/services/equipos';
+import { ErrorApi } from '@/services/errores';
+import { mostrarToast } from '@/services/avisos';
+import { useConexion, vibrar } from '@/composables/useConexion';
 
-interface Categoria {
-  id: number;
-  nombre: string;
-}
+const colorEstado: Record<Estado, string> = { disponible: 'success', prestado: 'warning', mantenimiento: 'medium' };
 
-interface Equipo {
-  id: number;
-  codigo: string;
-  nombre: string;
-  estado: string;
-  fecha_adquisicion: string;
-  categoria?: Categoria;
-}
-
-interface EquiposResponse {
-  data: Equipo[];
-  meta: {
-    current_page: number;
-    last_page: number;
-    total: number;
-  };
-}
-
-const { token, olvidarSesion } = useAuth();
+const { conectado } = useConexion();
 
 const equipos = ref<Equipo[]>([]);
-const busqueda = ref('');
-const paginaActual = ref(1);
+const pagina = ref(0);
 const ultimaPagina = ref(1);
-const cargandoInicial = ref(true);
-const errorMensaje = ref<string | null>(null);
+const q = ref('');
+const cargando = ref(false);
+const error = ref('');
+const hayMas = computed(() => pagina.value > 0 && pagina.value < ultimaPagina.value);
 
-function colorEstado(estado: string): string {
-  switch (estado) {
-    case 'disponible':
-      return 'success';
-    case 'prestado':
-      return 'warning';
-    case 'mantenimiento':
-      return 'medium';
-    default:
-      return 'primary';
-  }
-}
+async function cargar(reiniciar = false) {
+  if (cargando.value && !reiniciar) return;
 
-async function mostrarToast(message: string, color = 'dark') {
-  const toast = await toastController.create({
-    message,
-    duration: 2500,
-    color,
-    position: 'bottom',
-  });
-  await toast.present();
-}
-
-async function cargarEquipos(reiniciar = true) {
-  if (reiniciar) {
-    paginaActual.value = 1;
-    errorMensaje.value = null;
-    if (equipos.value.length === 0) {
-      cargandoInicial.value = true;
-    }
-  }
+  const paginaObjetivo = reiniciar ? 1 : pagina.value + 1;
+  cargando.value = true;
+  error.value = '';
 
   try {
-    const resp = await api<EquiposResponse>('/equipos', {
-      method: 'GET',
-      token: token.value,
-      onUnauthorized: olvidarSesion,
-      params: {
-        page: paginaActual.value,
-        per_page: 15,
-        q: busqueda.value.trim(),
-      },
-    });
-
-    if (resp) {
-      equipos.value = reiniciar ? resp.data : [...equipos.value, ...resp.data];
-      paginaActual.value = resp.meta.current_page;
-      ultimaPagina.value = resp.meta.last_page;
-    }
+    const res = await listar(paginaObjetivo, q.value.trim());
+    equipos.value = reiniciar ? res.data : [...equipos.value, ...res.data];
+    pagina.value = res.meta.current_page;
+    ultimaPagina.value = res.meta.last_page;
   } catch (err) {
+    if (err instanceof ErrorApi && err.status === 401) return;
+    const mensaje = err instanceof ErrorApi ? err.message : 'No fue posible cargar los equipos.';
     if (reiniciar) {
-      errorMensaje.value =
-        err instanceof ErrorApi ? err.message : 'Error al cargar los equipos.';
+      equipos.value = [];
+      pagina.value = 0;
+      ultimaPagina.value = 1;
+      error.value = mensaje;
     } else {
-      await mostrarToast('No se pudieron cargar más equipos.', 'danger');
+      await mostrarToast(mensaje, 'danger');
     }
   } finally {
-    cargandoInicial.value = false;
+    cargando.value = false;
   }
 }
 
-onIonViewWillEnter(async () => {
-  await cargarEquipos(true);
+onIonViewWillEnter(() => {
+  cargar(true);
 });
 
-async function onBuscar() {
-  await cargarEquipos(true);
+const buscar = () => cargar(true);
+
+async function refrescar(evento: RefresherCustomEvent) {
+  await cargar(true);
+  await evento.target.complete();
 }
 
-async function onRefresh(event: CustomEvent) {
-  await cargarEquipos(true);
-  (event.target as HTMLIonRefresherElement).complete();
+async function cargarMas(evento: InfiniteScrollCustomEvent) {
+  await cargar(false);
+  await evento.target.complete();
 }
 
-async function onInfinite(event: CustomEvent) {
-  if (paginaActual.value < ultimaPagina.value) {
-    paginaActual.value += 1;
-    await cargarEquipos(false);
-  }
-  (event.target as HTMLIonInfiniteScrollElement).complete();
-}
+async function confirmarEliminacion(equipo: Equipo, evento: Event) {
+  const sliding = (evento.target as HTMLElement | null)?.closest('ion-item-sliding') as HTMLIonItemSlidingElement | null;
+  await sliding?.close();
 
-async function confirmarEliminacion(equipo: Equipo) {
-  const alert = await alertController.create({
+  const alerta = await alertController.create({
     header: 'Eliminar equipo',
     message: `¿Desea eliminar "${equipo.nombre}" (${equipo.codigo})?`,
     buttons: [
-      {
-        text: 'Cancelar',
-        role: 'cancel',
-      },
-      {
-        text: 'Eliminar',
-        role: 'destructive',
-        handler: async () => {
-          await eliminarEquipo(equipo);
-        },
-      },
+      { text: 'Cancelar', role: 'cancel' },
+      { text: 'Eliminar', role: 'destructive' },
     ],
   });
+  await alerta.present();
 
-  await alert.present();
-}
+  const { role } = await alerta.onDidDismiss();
+  if (role !== 'destructive') return;
 
-async function eliminarEquipo(equipo: Equipo) {
   try {
-    await api(`/equipos/${equipo.id}`, {
-      method: 'DELETE',
-      token: token.value,
-      onUnauthorized: olvidarSesion,
-    });
-
+    await eliminar(equipo.id);
     equipos.value = equipos.value.filter((item) => item.id !== equipo.id);
-    await mostrarToast('Equipo eliminado correctamente.', 'success');
+    await vibrar();
+    await mostrarToast('Equipo eliminado.', 'success');
   } catch (err) {
-    if (err instanceof ErrorApi) {
-      if (err.status === 409) {
-        const msg =
-          typeof err.cuerpo === 'object' &&
-          err.cuerpo !== null &&
-          'mensaje' in err.cuerpo
-            ? String((err.cuerpo as { mensaje?: unknown }).mensaje)
-            : 'No se puede eliminar un equipo prestado.';
-        await mostrarToast(msg, 'warning');
-        return;
-      }
-
-      if (err.status === 404) {
-        equipos.value = equipos.value.filter((item) => item.id !== equipo.id);
-        await mostrarToast('El equipo ya no existe.', 'medium');
-        return;
-      }
-
-      await mostrarToast(err.message, 'danger');
+    if (err instanceof ErrorApi && err.status === 401) return;
+    if (err instanceof ErrorApi && err.status === 409) {
+      await mostrarToast(err.cuerpo?.mensaje ?? err.message, 'warning');
+    } else if (err instanceof ErrorApi && err.status === 404) {
+      equipos.value = equipos.value.filter((item) => item.id !== equipo.id);
+      await mostrarToast('El equipo ya no existe.', 'medium');
     } else {
-      await mostrarToast('Error al intentar eliminar el equipo.', 'danger');
+      await mostrarToast('No fue posible eliminar el equipo.', 'danger');
     }
   }
 }

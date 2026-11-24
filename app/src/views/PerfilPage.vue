@@ -1,116 +1,74 @@
 <template>
   <ion-page>
     <ion-header>
-      <ion-toolbar>
+      <ion-toolbar color="primary">
         <ion-title>Perfil</ion-title>
       </ion-toolbar>
     </ion-header>
 
-    <ion-content class="ion-padding">
-      <ion-card v-if="usuario">
-        <ion-card-header>
-          <ion-card-title>{{ usuario.nombre }}</ion-card-title>
-          <ion-card-subtitle>{{ usuario.email }}</ion-card-subtitle>
-        </ion-card-header>
-      </ion-card>
+    <ion-content>
+      <ion-list>
+        <ion-list-header>Sesión</ion-list-header>
+        <ion-item>
+          <ion-icon slot="start" :icon="personCircleOutline" aria-hidden="true" />
+          <ion-label>{{ usuario?.nombre ?? '—' }}</ion-label>
+        </ion-item>
 
-      <ion-card>
-        <ion-card-header>
-          <ion-card-title>Dispositivo</ion-card-title>
-        </ion-card-header>
-        <ion-card-content>
-          <ion-list lines="none">
-            <ion-item>
-              <ion-label>
-                <h3>Plataforma</h3>
-                <p>{{ plataforma }}</p>
-              </ion-label>
-            </ion-item>
-            <ion-item>
-              <ion-label>
-                <h3>Modelo</h3>
-                <p>{{ modelo }}</p>
-              </ion-label>
-            </ion-item>
-            <ion-item>
-              <ion-label>
-                <h3>Sistema operativo</h3>
-                <p>{{ sistemaOperativo }}</p>
-              </ion-label>
-            </ion-item>
-            <ion-item>
-              <ion-label>
-                <h3>Conexión</h3>
-                <p>{{ conectado ? `Conectado (${tipoConexion})` : 'Sin conexión' }}</p>
-              </ion-label>
-            </ion-item>
-          </ion-list>
+        <ion-list-header>Dispositivo</ion-list-header>
+        <ion-item>
+          <ion-label>Plataforma</ion-label>
+          <ion-note slot="end">{{ plataforma }}</ion-note>
+        </ion-item>
+        <ion-item>
+          <ion-label>Modelo</ion-label>
+          <ion-note slot="end">{{ dispositivo?.model ?? '—' }}</ion-note>
+        </ion-item>
+        <ion-item>
+          <ion-label>Sistema</ion-label>
+          <ion-note slot="end">
+            {{ dispositivo ? `${dispositivo.operatingSystem} ${dispositivo.osVersion}` : '—' }}
+          </ion-note>
+        </ion-item>
+        <ion-item>
+          <ion-label>Conexión</ion-label>
+          <ion-badge slot="end" :color="conectado ? 'success' : 'warning'">
+            {{ conectado ? tipo : 'sin conexión' }}
+          </ion-badge>
+        </ion-item>
+      </ion-list>
 
-          <ion-button expand="block" fill="outline" @click="probarVibracion">
-            Probar vibración
-          </ion-button>
-        </ion-card-content>
-      </ion-card>
-
-      <ion-button expand="block" color="danger" @click="salir">
-        Cerrar sesión
-      </ion-button>
+      <div class="ion-padding">
+        <ion-button expand="block" color="danger" fill="outline" @click="salir">Cerrar sesión</ion-button>
+      </div>
     </ion-content>
   </ion-page>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref } from 'vue';
 import {
-  IonPage,
-  IonHeader,
-  IonToolbar,
-  IonTitle,
-  IonContent,
-  IonCard,
-  IonCardHeader,
-  IonCardTitle,
-  IonCardSubtitle,
-  IonCardContent,
-  IonList,
-  IonItem,
-  IonLabel,
-  IonButton,
-  useIonRouter,
+  IonPage, IonHeader, IonToolbar, IonTitle, IonContent, IonList, IonListHeader, IonItem, IonIcon,
+  IonLabel, IonNote, IonBadge, IonButton, onIonViewWillEnter, useIonRouter,
 } from '@ionic/vue';
+import { personCircleOutline } from 'ionicons/icons';
 import { Capacitor } from '@capacitor/core';
-import { Device } from '@capacitor/device';
-import { Haptics, ImpactStyle } from '@capacitor/haptics';
-import { useAuth } from '../composables/useAuth';
-import { useConexion } from '../composables/useConexion';
+import { Device, type DeviceInfo } from '@capacitor/device';
+import { useAuth } from '@/composables/useAuth';
+import { useConexion } from '@/composables/useConexion';
 
-const ionRouter = useIonRouter();
 const { usuario, cerrarSesion } = useAuth();
-const { conectado, tipoConexion } = useConexion();
+const { conectado, tipo } = useConexion();
+const ionRouter = useIonRouter();
 
-const plataforma = ref(Capacitor.getPlatform());
-const modelo = ref('');
-const sistemaOperativo = ref('');
+const plataforma = Capacitor.getPlatform();
+const dispositivo = ref<DeviceInfo | null>(null);
 
-onMounted(async () => {
-  const info = await Device.getInfo();
-  modelo.value = `${info.manufacturer ?? ''} ${info.model ?? ''}`.trim();
-  sistemaOperativo.value = `${info.operatingSystem} ${info.osVersion}`.trim();
+onIonViewWillEnter(async () => {
+  dispositivo.value = await Device.getInfo();
 });
-
-async function vibrar() {
-  if (!Capacitor.isNativePlatform()) {
-    return;
-  }
-  await Haptics.impact({ style: ImpactStyle.Medium });
-}
-
-async function probarVibracion() {
-  await vibrar();
-}
 
 async function salir() {
   await cerrarSesion();
-  ionRouter.replace('/login');
+  ionRouter.navigate('/login', 'root', 'replace');
 }
 </script>

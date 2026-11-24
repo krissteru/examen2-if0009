@@ -3,5 +3,5 @@
     <string name="app_name">Préstamos Ortega</string>
     <string name="title_activity_main">Préstamos Ortega</string>
     <string name="package_name">cr.ac.ucr.if0009.c5i021</string>
-    <string name="custom_url_scheme"><cr class="ac ucr if0009 c5i021"></cr></string>
+    <string name="custom_url_scheme">cr.ac.ucr.if0009.c5i021</string>
 </resources>

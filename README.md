@@ -57,10 +57,10 @@ Cada comentario `TODO` describe exactamente lo que se espera. Los archivos marca
 Guarde en `app/docs/evidencia-android.png` una captura de **su** app corriendo en el emulador,
 en la pestaña **Perfil** (debe verse *Plataforma: android*), y complete:
 
-- Carné:
-- appId:
-- Versión de Node / Ionic CLI / Capacitor (`node -v`, `ionic -v`, `npx cap -V`):
-- ¿Se generó el APK de depuración? (sí/no):
+- Carné: C5I021
+- appId: cr.ac.ucr.if0009.c5i021
+- Versión de Node / Ionic CLI / Capacitor (`node -v`, `ionic -v`, `npx cap -V`): Node v24.20.0 / Ionic CLI no instalado globalmente (compilación con `npm run build` / Vite 8.3.8) / Capacitor 8.6.2
+- ¿Se generó el APK de depuración? (sí/no): sí (`app/android/app/build/outputs/apk/debug/app-debug.apk`)
 
 ## Reglas
 
